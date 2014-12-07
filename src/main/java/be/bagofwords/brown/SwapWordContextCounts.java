@@ -96,10 +96,12 @@ public class SwapWordContextCounts implements ContextCounts {
             if (countsToSwap.size() > 1) {
                 throw new RuntimeException("Unexpected counts!");
             }
-            origCounts = new Int2IntOpenHashMap(origCounts);
             int countToSwap = countsToSwap.get(DUMMY_CLUSTER);
-            origCounts.addTo(DUMMY_CLUSTER, countToSwap);
-            reduceValue(origCounts, currCluster, countToSwap);
+            if (countToSwap > 0) {
+                origCounts = new Int2IntOpenHashMap(origCounts);
+                origCounts.addTo(DUMMY_CLUSTER, countToSwap);
+                reduceValue(origCounts, currCluster, countToSwap);
+            }
         }
         return origCounts;
     }

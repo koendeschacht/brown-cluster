@@ -14,7 +14,7 @@ import java.util.*;
 
 /**
  * Created by Koen Deschacht (koendeschacht@gmail.com) on 02/12/14.
- * <p>
+ * <p/>
  * Clustering algorithm of words and phrases described in:
  * Class Based n-gram Models of Natural Language, P.F. Brown, P.V. deSouza, R.L. Mercer, V.J.D. Pietra, J.C. Lai
  * http://people.csail.mit.edu/imcgraw/links/research/pubs/ClassBasedNGrams.pdf
@@ -59,20 +59,34 @@ public class BrownCluster {
 
     private void doClustering(Map<Integer, String> phraseMap, ContextCountsImpl phraseContextCounts) throws IOException {
         Int2IntOpenHashMap phraseToClusterMap = initializeClusters(phraseMap.size());
+        /**
+         * STEP 1: create for every unique phrase a unique cluster
+         */
         ContextCountsImpl clusterContextCounts = phraseContextCounts.clone(); //initially these counts are identical
         Map<Integer, String> clusterNames = initializeClusterNames(phraseMap, phraseToClusterMap);
         if (DO_TESTS) {
             TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
         }
+        /**
+         * STEP 2: for all phrases that are not among the maxNumberOfClusters frequent phrases, merge the cluster that corresponds to that phrase into one of the frequent clusters
+         */
         mergeInfrequentPhrasesWithFrequentPhraseClusters(clusterNames, phraseToClusterMap, clusterContextCounts);
+        if (DO_TESTS) {
+            TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
+        }
+        /**
+         * STEP 3: swap phrases between clusters to improve overall score
+         */
         swapPhrases(phraseToClusterMap, clusterContextCounts, phraseContextCounts);
-        Map<Integer, ClusterHistoryNode> leafHistoryNodes = initializeHistoryNodes(phraseToClusterMap);
-        Map<Integer, ClusterHistoryNode> historyNodesInProgress = new HashMap<>(leafHistoryNodes);
-        UI.write("Starting merge phase 1");
-        //iterativelyMergeClusters(maxNumberOfClusters, Integer.MAX_VALUE, 0, maxNumberOfClusters, clusterNames, historyNodesInProgress, clusterContextCounts);
-        UI.write("Starting merge phase 2");
-        iterativelyMergeClusters(0, Integer.MAX_VALUE, 0, Integer.MAX_VALUE, clusterNames, historyNodesInProgress, clusterContextCounts);
-        writeOutput(phraseMap, phraseToClusterMap, leafHistoryNodes);
+        if (DO_TESTS) {
+            TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
+        }
+        /**
+         * STEP 4: merge remaining clusters hierarchically
+         */
+        Map<Integer, ClusterHistoryNode> historyNodes = initializeHistoryNodes(phraseToClusterMap);
+        iterativelyMergeClusters(clusterNames, historyNodes, clusterContextCounts);
+        writeOutput(phraseMap, phraseToClusterMap, historyNodes);
     }
 
 
@@ -140,7 +154,6 @@ public class BrownCluster {
                         checkSwapScores(phraseToClusterMap, clusterContextCounts, phraseContextCounts, phrase, currCluster, bestClusterScore, oldScore, newCluster);
                     }
                     finished = false;
-
                 }
             }
         }
@@ -197,8 +210,9 @@ public class BrownCluster {
     }
 
 
-    private void iterativelyMergeClusters(int mergeCandidateStart, int mergeCandidateEnd, int mergeDestinationStart, int mergeDestinationEnd, Map<Integer, String> clusterNames, Map<Integer, ClusterHistoryNode> nodes, ContextCountsImpl contextCounts) {
-        List<MergeCandidate> mergeCandidates = computeAllScores(mergeCandidateStart, mergeCandidateEnd, mergeDestinationStart, mergeDestinationEnd, contextCounts);
+    private void iterativelyMergeClusters(Map<Integer, String> clusterNames, Map<Integer, ClusterHistoryNode> nodes, ContextCountsImpl contextCounts) {
+        nodes = new HashMap<>(nodes);
+        List<MergeCandidate> mergeCandidates = computeAllScores(contextCounts);
         while (!mergeCandidates.isEmpty()) {
             MergeCandidate next = mergeCandidates.remove(mergeCandidates.size() - 1);
             int cluster1 = next.getCluster1();
@@ -221,19 +235,15 @@ public class BrownCluster {
         nodes.put(largeCluster, parent);
     }
 
-    private List<MergeCandidate> computeAllScores(int mergeCandidateStart, int mergeCandidateEnd, int mergeDestinationStart, int mergeDestinationEnd, ContextCounts contextCounts) {
+    private List<MergeCandidate> computeAllScores(ContextCounts contextCounts) {
         List<MergeCandidate> mergeCandidates = Collections.synchronizedList(new ArrayList<>());
         Set<Integer> allClusters = contextCounts.getAllClusters();
         allClusters.parallelStream().forEach(cluster1 -> {
-            if (cluster1 >= mergeCandidateStart && cluster1 < mergeCandidateEnd) {
-                double ski = computeSK(cluster1, contextCounts);
-                for (Integer cluster2 : allClusters) {
-                    if (cluster2 >= mergeDestinationStart && cluster2 < mergeDestinationEnd) {
-                        if (cluster2 < cluster1) {
-                            double score = computeMergeScore(cluster1, ski, cluster2, contextCounts);
-                            mergeCandidates.add(new MergeCandidate(cluster1, cluster2, score));
-                        }
-                    }
+            double ski = computeSK(cluster1, contextCounts);
+            for (Integer cluster2 : allClusters) {
+                if (cluster1 < cluster2) {
+                    double score = computeMergeScore(cluster1, ski, cluster2, contextCounts);
+                    mergeCandidates.add(new MergeCandidate(cluster1, cluster2, score));
                 }
             }
         });
@@ -328,11 +338,13 @@ public class BrownCluster {
             double pklm = jointCounts / grandTotal;
             double plkl = totalCki / grandTotal;
             double prkm = totalCkj / grandTotal;
-            checkProbability(pklm);
-            checkProbability(plkl);
-            checkProbability(prkm);
-            if (plkl == 0 || prkm == 0) {
-                throw new RuntimeException("Illegal probabilities!");
+            if (DO_TESTS) {
+                checkProbability(pklm);
+                checkProbability(plkl);
+                checkProbability(prkm);
+                if (plkl == 0 || prkm == 0) {
+                    throw new RuntimeException("Illegal probabilities!");
+                }
             }
             return pklm * Math.log(pklm / (plkl * prkm));
         } else {

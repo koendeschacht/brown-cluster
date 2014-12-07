@@ -65,7 +65,7 @@ public class MergedContextCounts implements ContextCounts {
         if (cluster == smallCluster || cluster == largeCluster) {
             result = merge(contextCounts.getNextCounts(smallCluster), contextCounts.getNextCounts(largeCluster));
         } else {
-            result = new Int2IntOpenHashMap(contextCounts.getNextCounts(cluster));
+            result = contextCounts.getNextCounts(cluster);
         }
         result = replace(result, smallCluster, largeCluster);
         return result;
