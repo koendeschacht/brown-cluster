@@ -23,7 +23,7 @@ public class ContextCountsImpl implements ContextCounts {
         this.prevCounts = prevCounts;
         this.nextCounts = nextCounts;
         computeTotals();
-        if (BrownCluster.DO_TESTS) {
+        if (BrownClustering.DO_TESTS) {
             checkCountsConsistent();
         }
     }
@@ -55,7 +55,7 @@ public class ContextCountsImpl implements ContextCounts {
         mergeCounts(smallCluster, largeCluster, nextCounts);
         prevTotals.put(largeCluster, prevTotals.get(largeCluster) + prevTotals.remove(smallCluster));
         nextTotals.put(largeCluster, nextTotals.get(largeCluster) + nextTotals.remove(smallCluster));
-        if (BrownCluster.DO_TESTS) {
+        if (BrownClustering.DO_TESTS) {
             checkCountsConsistent();
         }
     }
@@ -85,7 +85,7 @@ public class ContextCountsImpl implements ContextCounts {
         int added = addCounts(prevCounts, contextCounts.prevCounts, prevTotals, -1);
         grandTotal -= added;
         addCounts(nextCounts, contextCounts.nextCounts, nextTotals, -1);
-        if (BrownCluster.DO_TESTS) {
+        if (BrownClustering.DO_TESTS) {
             checkCountsConsistent();
         }
     }
@@ -94,7 +94,7 @@ public class ContextCountsImpl implements ContextCounts {
         int added = addCounts(prevCounts, contextCounts.prevCounts, prevTotals, 1);
         grandTotal += added;
         addCounts(nextCounts, contextCounts.nextCounts, nextTotals, 1);
-        if (BrownCluster.DO_TESTS) {
+        if (BrownClustering.DO_TESTS) {
             checkCountsConsistent();
         }
     }
@@ -215,7 +215,7 @@ public class ContextCountsImpl implements ContextCounts {
         mapCluster(result.nextCounts, oldCluster, newCluster);
         result.prevTotals.addTo(newCluster, result.prevTotals.remove(oldCluster));
         result.nextTotals.addTo(newCluster, result.nextTotals.remove(oldCluster));
-        if (BrownCluster.DO_TESTS) {
+        if (BrownClustering.DO_TESTS) {
             result.checkCountsConsistent();
         }
         return result;

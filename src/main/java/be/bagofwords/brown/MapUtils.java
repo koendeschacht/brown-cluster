@@ -1,7 +1,9 @@
 package be.bagofwords.brown;
 
+import it.unimi.dsi.fastutil.ints.Int2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -10,11 +12,44 @@ import java.util.stream.Collectors;
  */
 public class MapUtils {
 
+    public static ContextCountsImpl computeContextCounts(ContextCountsImpl phraseContextCounts, Int2IntOpenHashMap phraseToClusterMap) {
+        Map<Integer, Int2IntOpenHashMap> prevCounts = new HashMap<>();
+        Map<Integer, Int2IntOpenHashMap> nextCounts = new HashMap<>();
+        for (Integer phrase : phraseContextCounts.getAllPhrases()) {
+            Integer cluster = phraseToClusterMap.get(phrase);
+            Int2IntOpenHashMap prevCountsForPhrase = phraseContextCounts.getPrevCounts(phrase);
+            addCounts(phraseToClusterMap, prevCounts, cluster, prevCountsForPhrase);
+            Int2IntOpenHashMap nextCountsForPhrase = phraseContextCounts.getNextCounts(phrase);
+            addCounts(phraseToClusterMap, nextCounts, cluster, nextCountsForPhrase);
+        }
+        return new ContextCountsImpl(prevCounts, nextCounts);
+    }
+
+    private static void addCounts(Int2IntOpenHashMap phraseToClusterMap, Map<Integer, Int2IntOpenHashMap> clusterCounts, Integer cluster, Int2IntOpenHashMap phraseCounts) {
+        Int2IntOpenHashMap clusterCountsForCluster = clusterCounts.get(cluster);
+        if (clusterCountsForCluster == null) {
+            clusterCountsForCluster = MapUtils.createNewInt2IntMap();
+            clusterCounts.put(cluster, clusterCountsForCluster);
+        }
+        for (Map.Entry<Integer, Integer> entry : phraseCounts.entrySet()) {
+            Integer cluster2 = phraseToClusterMap.get(entry.getKey());
+            clusterCountsForCluster.addTo(cluster2, entry.getValue());
+        }
+    }
+
     public static int getTotalOfMap(Int2IntOpenHashMap count) {
         if (count == null) {
             return 0;
         } else {
             return count.values().stream().collect(Collectors.summingInt(v -> v));
+        }
+    }
+
+    public static double getTotalOfMap(Int2DoubleOpenHashMap count) {
+        if (count == null) {
+            return 0.0;
+        } else {
+            return count.values().stream().collect(Collectors.summingDouble(v -> v));
         }
     }
 

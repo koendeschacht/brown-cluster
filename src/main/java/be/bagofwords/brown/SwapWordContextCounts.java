@@ -6,8 +6,8 @@ import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import java.util.Set;
 
 /**
- * Created by Koen Deschacht (koendeschacht@gmail.com) on 03/12/14.
- */
+* Created by Koen Deschacht (koendeschacht@gmail.com) on 03/12/14.
+*/
 public class SwapWordContextCounts implements ContextCounts {
 
     public static final int DUMMY_CLUSTER = -1;
@@ -78,7 +78,7 @@ public class SwapWordContextCounts implements ContextCounts {
 
     private Int2IntOpenHashMap reduceCounts(Int2IntOpenHashMap origCounts, Int2IntOpenHashMap countsToReduce) {
         if (countsToReduce != null) {
-            origCounts = new Int2IntOpenHashMap(origCounts);
+            origCounts = origCounts.clone();
             for (Int2IntMap.Entry entry : countsToReduce.int2IntEntrySet()) {
                 int cluster = entry.getIntKey();
                 if (cluster == DUMMY_CLUSTER) {
@@ -98,7 +98,7 @@ public class SwapWordContextCounts implements ContextCounts {
             }
             int countToSwap = countsToSwap.get(DUMMY_CLUSTER);
             if (countToSwap > 0) {
-                origCounts = new Int2IntOpenHashMap(origCounts);
+                origCounts = origCounts.clone();
                 origCounts.addTo(DUMMY_CLUSTER, countToSwap);
                 reduceValue(origCounts, currCluster, countToSwap);
             }
