@@ -11,8 +11,6 @@ import org.apache.commons.lang3.mutable.MutableInt;
 
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
  * Created by Koen Deschacht (koendeschacht@gmail.com) on 02/12/14.
@@ -40,7 +38,6 @@ public class BrownClustering extends BaseWordClustering {
 
     private final int maxNumberOfClusters;
     private boolean onlySwapMostFrequentWords;
-    private ExecutorService executorService = Executors.newFixedThreadPool(8);
 
     public BrownClustering(String inputFile, String outputFile, int minFrequencyOfPhrase, int maxNumberOfClusters, boolean onlySwapMostFrequentWords) {
         super(inputFile, outputFile, minFrequencyOfPhrase);
@@ -57,7 +54,6 @@ public class BrownClustering extends BaseWordClustering {
         ContextCountsImpl contextCounts = extractContextCounts(phraseMap);
         doClustering(phraseMap, contextCounts, phraseFrequencies);
         threadSampleMonitor.terminate();
-        executorService.shutdown();
     }
 
     private void doClustering(Map<Integer, String> phraseMap, ContextCountsImpl phraseContextCounts, Int2IntOpenHashMap phraseFrequencies) throws IOException {
@@ -93,9 +89,11 @@ public class BrownClustering extends BaseWordClustering {
     }
 
     private void swapPhrases(int phraseStart, int phraseEnd, Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts, ContextCountsImpl phraseContextCounts) {
-        boolean finished = false;
-        while (!finished) {
-            finished = true;
+        int numOfPhrases = phraseEnd - phraseStart;
+        int numOfPhrasesChangedInLastIteration = numOfPhrases;
+        int iteration = 0;
+        while (numOfPhrasesChangedInLastIteration * 100 > numOfPhrases) {
+            numOfPhrasesChangedInLastIteration = 0;
             for (int phrase = phraseStart; phrase < phraseEnd; phrase++) {
                 int currCluster = phraseToClusterMap.get(phrase);
                 ContextCountsImpl contextCountsForPhrase = mapPhraseCountsToClusterCounts(phrase, phraseToClusterMap, phraseContextCounts, SwapWordContextCounts.DUMMY_CLUSTER);
@@ -103,9 +101,8 @@ public class BrownClustering extends BaseWordClustering {
                 Pair<Integer, Double> bestClusterScore = findBestClusterToMerge(SwapWordContextCounts.DUMMY_CLUSTER, 0, maxNumberOfClusters, swapWordContextCounts);
                 double oldScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, currCluster, swapWordContextCounts);
                 if (bestClusterScore.getFirst() != currCluster && bestClusterScore.getSecond() > oldScore + 1e-10) {
-                    //if the best cluster is not the current one, we merge our counts
                     int newCluster = bestClusterScore.getFirst();
-                    UI.write("Assigning phrase " + phrase + " to cluster " + newCluster + " (was cluster " + currCluster + ")");
+                    UI.write("Iteration " + iteration + " assigning phrase " + phrase + " to cluster " + newCluster + " (was cluster " + currCluster + ")");
                     phraseToClusterMap.put(phrase, newCluster);
                     clusterContextCounts.removeCounts(contextCountsForPhrase.mapCluster(SwapWordContextCounts.DUMMY_CLUSTER, currCluster));
                     clusterContextCounts.addCounts(contextCountsForPhrase.mapCluster(SwapWordContextCounts.DUMMY_CLUSTER, newCluster));
@@ -113,9 +110,10 @@ public class BrownClustering extends BaseWordClustering {
                         TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
                         checkSwapScores(phraseToClusterMap, clusterContextCounts, phraseContextCounts, phrase, currCluster, bestClusterScore, oldScore, newCluster);
                     }
-                    finished = false;
+                    numOfPhrasesChangedInLastIteration++;
                 }
             }
+            iteration++;
         }
     }
 
@@ -168,7 +166,7 @@ public class BrownClustering extends BaseWordClustering {
             MergeCandidate next = mergeCandidates.remove(mergeCandidates.size() - 1);
             int cluster1 = next.getCluster1();
             int cluster2 = next.getCluster2();
-            UI.write("Will merge " + cluster1 + " with " + cluster2);
+            UI.write("Will merge cluster " + cluster1 + " with " + cluster2 + " (" + mergeCandidates.size() + " candidates remaining)");
             contextCounts.mergeClusters(cluster1, cluster2);
             updateClusterNodes(nodes, cluster1, cluster2);
             removeMergeCandidates(mergeCandidates, cluster1);
@@ -198,24 +196,12 @@ public class BrownClustering extends BaseWordClustering {
 
     private void updateMergeCandidateScores(int cluster2, List<MergeCandidate> mergeCandidates, ContextCounts contextCounts) {
         double skj = computeSK(cluster2, contextCounts);
-        MutableInt numberOfCandidatesRemaining = new MutableInt(0);
-        for (MergeCandidate mergeCandidate : mergeCandidates) {
+        Utils.fasterParallelStream(mergeCandidates).forEach(mergeCandidate -> {
             if (mergeCandidate.getCluster2() == cluster2) {
-                synchronized (numberOfCandidatesRemaining) {
-                    numberOfCandidatesRemaining.increment();
-                }
-                executorService.submit(() -> {
-                    double ski = computeSK(mergeCandidate.getCluster1(), contextCounts);
-                    mergeCandidate.setScore(computeMergeScore(mergeCandidate.getCluster1(), ski, mergeCandidate.getCluster2(), skj, contextCounts));
-                    synchronized (numberOfCandidatesRemaining) {
-                        numberOfCandidatesRemaining.decrement();
-                    }
-                });
+                double ski = computeSK(mergeCandidate.getCluster1(), contextCounts);
+                mergeCandidate.setScore(computeMergeScore(mergeCandidate.getCluster1(), ski, mergeCandidate.getCluster2(), skj, contextCounts));
             }
-        }
-        while (numberOfCandidatesRemaining.getValue() > 0) {
-            Utils.threadSleep(1);
-        }
+        });
         Collections.sort(mergeCandidates);
     }
 
@@ -229,34 +215,21 @@ public class BrownClustering extends BaseWordClustering {
     }
 
     private Pair<Integer, Double> findBestClusterToMerge(int origCluster, int minCluster, int maxCluster, ContextCounts clusterContextCounts) {
-        Object syncLock = new Object();
         MutableDouble bestScore = new MutableDouble(-Double.MAX_VALUE);
         MutableInt bestCluster = new MutableInt(-1);
-        MutableInt numOfClustersRemaining = new MutableInt(0);
-        for (Integer cluster : clusterContextCounts.getAllClusters()) {
+        Utils.fasterParallelStream(clusterContextCounts.getAllClusters()).forEach(cluster -> {
             if (cluster >= minCluster && cluster < maxCluster && cluster != origCluster) {
-                synchronized (numOfClustersRemaining) {
-                    numOfClustersRemaining.increment();
-                }
-                executorService.submit(() -> {
-                    double score = computeMergeScore(origCluster, 0.0, cluster, clusterContextCounts);
-                    if (score > bestScore.doubleValue()) {
-                        synchronized (syncLock) {
-                            if (score > bestScore.doubleValue()) { //bestScore might have changed while we acquiring the lock
-                                bestScore.setValue(score);
-                                bestCluster.setValue(cluster);
-                            }
+                double score = computeMergeScore(origCluster, 0.0, cluster, clusterContextCounts);
+                if (score > bestScore.doubleValue()) {
+                    synchronized (bestScore) {
+                        if (score > bestScore.doubleValue()) { //bestScore might have changed while acquiring lock
+                            bestScore.setValue(score);
+                            bestCluster.setValue(cluster);
                         }
                     }
-                    synchronized (numOfClustersRemaining) {
-                        numOfClustersRemaining.decrement();
-                    }
-                });
+                }
             }
-        }
-        while (numOfClustersRemaining.getValue() > 0) {
-            Utils.threadSleep(1);
-        }
+        });
         return new Pair<>(bestCluster.intValue(), bestScore.doubleValue());
     }
 

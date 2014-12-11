@@ -164,12 +164,22 @@ public class ContextCountsImpl implements ContextCounts {
     }
 
     public Int2IntOpenHashMap getPrevCounts(int cluster) {
-        return prevCounts.get(cluster);
+        Int2IntOpenHashMap result = prevCounts.get(cluster);
+        return returnResultOrEmpty(result);
     }
 
     @Override
     public Int2IntOpenHashMap getNextCounts(int cluster) {
-        return nextCounts.get(cluster);
+        Int2IntOpenHashMap result = nextCounts.get(cluster);
+        return returnResultOrEmpty(result);
+    }
+
+    private Int2IntOpenHashMap returnResultOrEmpty(Int2IntOpenHashMap result) {
+        if (result == null) {
+            return MapUtils.createNewInt2IntMap();
+        } else {
+            return result;
+        }
     }
 
     private void addCount(Int2IntOpenHashMap currentCounts, int key, int value) {
