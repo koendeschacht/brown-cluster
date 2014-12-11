@@ -6,29 +6,34 @@ import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import java.util.Set;
 
 /**
-* Created by Koen Deschacht (koendeschacht@gmail.com) on 03/12/14.
-*/
+ * Created by Koen Deschacht (koendeschacht@gmail.com) on 03/12/14.
+ * <p/>
+ * This class represents context counts where one phrase was mapped to the cluster DUMMY_CLUSTER.
+ */
 public class SwapWordContextCounts implements ContextCounts {
 
     public static final int DUMMY_CLUSTER = -1;
 
     private final ContextCounts origContextCounts;
-    private final ContextCounts contextCountsWithWord;
-    private final int currCluster;
+    private final ContextCounts phraseContextCounts;
+    private final int currClusterOfPhrase;
 
-    public SwapWordContextCounts(ContextCounts origContextCounts, ContextCounts contextCountsWithWord, int currCluster) {
+    public SwapWordContextCounts(ContextCounts origContextCounts, ContextCounts phraseContextCounts, int currClusterOfPhrase) {
         this.origContextCounts = origContextCounts;
-        this.contextCountsWithWord = contextCountsWithWord;
-        this.currCluster = currCluster;
+        this.phraseContextCounts = phraseContextCounts;
+        this.currClusterOfPhrase = currClusterOfPhrase;
     }
 
     @Override
     public int getPrevTotal(int cluster) {
         if (cluster == DUMMY_CLUSTER) {
-            return contextCountsWithWord.getPrevTotal(DUMMY_CLUSTER);
-        } else if (cluster == currCluster) {
-            return origContextCounts.getPrevTotal(currCluster) - contextCountsWithWord.getPrevTotal(DUMMY_CLUSTER);
+            //DUMMY_CLUSTER only occurs in phraseContextCounts
+            return phraseContextCounts.getPrevTotal(DUMMY_CLUSTER);
+        } else if (cluster == currClusterOfPhrase) {
+            //reduce the original context counts with the counts that have been assigned to DUMMY_CLUSTER
+            return origContextCounts.getPrevTotal(currClusterOfPhrase) - phraseContextCounts.getPrevTotal(DUMMY_CLUSTER);
         } else {
+            //the total counts of this cluster are not affected
             return origContextCounts.getPrevTotal(cluster);
         }
     }
@@ -36,10 +41,13 @@ public class SwapWordContextCounts implements ContextCounts {
     @Override
     public int getNextTotal(int cluster) {
         if (cluster == DUMMY_CLUSTER) {
-            return contextCountsWithWord.getNextTotal(DUMMY_CLUSTER);
-        } else if (cluster == currCluster) {
-            return origContextCounts.getNextTotal(currCluster) - contextCountsWithWord.getNextTotal(DUMMY_CLUSTER);
+            //DUMMY_CLUSTER only occurs in phraseContextCounts
+            return phraseContextCounts.getNextTotal(DUMMY_CLUSTER);
+        } else if (cluster == currClusterOfPhrase) {
+            //reduce the original context counts with the counts that have been assigned to DUMMY_CLUSTER
+            return origContextCounts.getNextTotal(currClusterOfPhrase) - phraseContextCounts.getNextTotal(DUMMY_CLUSTER);
         } else {
+            //the total counts of this cluster are not affected
             return origContextCounts.getNextTotal(cluster);
         }
     }
@@ -51,28 +59,40 @@ public class SwapWordContextCounts implements ContextCounts {
 
     @Override
     public Set<Integer> getAllClusters() {
-        return origContextCounts.getAllClusters();
+        Set<Integer> result = origContextCounts.getAllClusters();
+        result.add(DUMMY_CLUSTER);
+        return result;
     }
 
     @Override
     public Int2IntOpenHashMap getPrevCounts(int cluster) {
         if (cluster == DUMMY_CLUSTER) {
-            return contextCountsWithWord.getPrevCounts(cluster);
-        } else if (cluster == currCluster) {
-            return swapCounts(reduceCounts(origContextCounts.getPrevCounts(cluster), contextCountsWithWord.getPrevCounts(DUMMY_CLUSTER)), contextCountsWithWord.getPrevCounts(cluster));
+            //DUMMY_CLUSTER only occurs in phraseContextCounts
+            return phraseContextCounts.getPrevCounts(cluster);
+        } else if (cluster == currClusterOfPhrase) {
+            //first reduce counts with counts that have been mapped to DUMMY_CLUSTER
+            Int2IntOpenHashMap reducedCounts = reduceCounts(origContextCounts.getPrevCounts(cluster), phraseContextCounts.getPrevCounts(DUMMY_CLUSTER));
+            //then swap counts that previously mapped to currClusterOfPhrase to DUMMY_CLUSTER
+            return swapCounts(reducedCounts, phraseContextCounts.getPrevCounts(cluster));
         } else {
-            return swapCounts(origContextCounts.getPrevCounts(cluster), contextCountsWithWord.getPrevCounts(cluster));
+            //swap counts that previously mapped to currClusterOfPhrase to DUMMY_CLUSTER
+            return swapCounts(origContextCounts.getPrevCounts(cluster), phraseContextCounts.getPrevCounts(cluster));
         }
     }
 
     @Override
     public Int2IntOpenHashMap getNextCounts(int cluster) {
         if (cluster == DUMMY_CLUSTER) {
-            return contextCountsWithWord.getNextCounts(cluster);
-        } else if (cluster == currCluster) {
-            return swapCounts(reduceCounts(origContextCounts.getNextCounts(cluster), contextCountsWithWord.getNextCounts(DUMMY_CLUSTER)), contextCountsWithWord.getNextCounts(cluster));
+            //DUMMY_CLUSTER only occurs in phraseContextCounts
+            return phraseContextCounts.getNextCounts(cluster);
+        } else if (cluster == currClusterOfPhrase) {
+            //first reduce counts with counts that have been mapped to DUMMY_CLUSTER
+            Int2IntOpenHashMap reducedCounts = reduceCounts(origContextCounts.getNextCounts(cluster), phraseContextCounts.getNextCounts(DUMMY_CLUSTER));
+            //then swap counts that previously mapped to currClusterOfPhrase to DUMMY_CLUSTER
+            return swapCounts(reducedCounts, phraseContextCounts.getNextCounts(cluster));
         } else {
-            return swapCounts(origContextCounts.getNextCounts(cluster), contextCountsWithWord.getNextCounts(cluster));
+            //swap counts that previously mapped to currClusterOfPhrase to DUMMY_CLUSTER
+            return swapCounts(origContextCounts.getNextCounts(cluster), phraseContextCounts.getNextCounts(cluster));
         }
     }
 
@@ -82,7 +102,7 @@ public class SwapWordContextCounts implements ContextCounts {
             for (Int2IntMap.Entry entry : countsToReduce.int2IntEntrySet()) {
                 int cluster = entry.getIntKey();
                 if (cluster == DUMMY_CLUSTER) {
-                    reduceValue(origCounts, currCluster, entry.getIntValue());
+                    reduceValue(origCounts, currClusterOfPhrase, entry.getIntValue());
                 } else {
                     reduceValue(origCounts, cluster, entry.getIntValue());
                 }
@@ -100,7 +120,7 @@ public class SwapWordContextCounts implements ContextCounts {
             if (countToSwap > 0) {
                 origCounts = origCounts.clone();
                 origCounts.addTo(DUMMY_CLUSTER, countToSwap);
-                reduceValue(origCounts, currCluster, countToSwap);
+                reduceValue(origCounts, currClusterOfPhrase, countToSwap);
             }
         }
         return origCounts;

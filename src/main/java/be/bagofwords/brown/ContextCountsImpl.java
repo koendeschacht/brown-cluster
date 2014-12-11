@@ -45,9 +45,9 @@ public class ContextCountsImpl implements ContextCounts {
 
 
     private void computeTotals() {
-        prevTotals = MapUtils.computeMapTotals(prevCounts);
-        nextTotals = MapUtils.computeMapTotals(nextCounts);
-        grandTotal = MapUtils.getTotalOfMap(nextTotals);
+        prevTotals = ContextCountsUtils.computeMapTotals(prevCounts);
+        nextTotals = ContextCountsUtils.computeMapTotals(nextCounts);
+        grandTotal = ContextCountsUtils.getTotal(nextTotals);
     }
 
     public void mergeClusters(int smallCluster, int largeCluster) {
@@ -65,7 +65,7 @@ public class ContextCountsImpl implements ContextCounts {
         Int2IntOpenHashMap countsSmallCluster = counts.remove(smallCluster);
         Int2IntOpenHashMap countsLargeCluster = counts.get(largeCluster);
         if (countsLargeCluster == null) {
-            countsLargeCluster = MapUtils.createNewInt2IntMap();
+            countsLargeCluster = ContextCountsUtils.createNewInt2IntMap();
             counts.put(largeCluster, countsLargeCluster);
         }
         for (Int2IntOpenHashMap.Entry entry : countsSmallCluster.int2IntEntrySet()) {
@@ -104,7 +104,7 @@ public class ContextCountsImpl implements ContextCounts {
         for (Map.Entry<Integer, Int2IntOpenHashMap> entry : countsToAdd.entrySet()) {
             Int2IntOpenHashMap countsForKey = counts.get(entry.getKey());
             if (countsForKey == null) {
-                countsForKey = MapUtils.createNewInt2IntMap();
+                countsForKey = ContextCountsUtils.createNewInt2IntMap();
                 counts.put(entry.getKey(), countsForKey);
             }
             int added = addCountsSingleMap(countsForKey, entry.getValue(), sign);
@@ -176,7 +176,7 @@ public class ContextCountsImpl implements ContextCounts {
 
     private Int2IntOpenHashMap returnResultOrEmpty(Int2IntOpenHashMap result) {
         if (result == null) {
-            return MapUtils.createNewInt2IntMap();
+            return ContextCountsUtils.createNewInt2IntMap();
         } else {
             return result;
         }
@@ -192,10 +192,10 @@ public class ContextCountsImpl implements ContextCounts {
     }
 
     private void checkCountsConsistent() {
-        if (MapUtils.getTotal(prevCounts) != MapUtils.getTotalOfMap(prevTotals) || MapUtils.getTotalOfMap(prevTotals) != grandTotal) {
+        if (ContextCountsUtils.getTotal(prevCounts) != ContextCountsUtils.getTotal(prevTotals) || ContextCountsUtils.getTotal(prevTotals) != grandTotal) {
             throw new RuntimeException("Inconsistent prev counts!");
         }
-        if (MapUtils.getTotal(nextCounts) != MapUtils.getTotalOfMap(nextTotals) || MapUtils.getTotalOfMap(nextTotals) != grandTotal) {
+        if (ContextCountsUtils.getTotal(nextCounts) != ContextCountsUtils.getTotal(nextTotals) || ContextCountsUtils.getTotal(nextTotals) != grandTotal) {
             throw new RuntimeException("Inconsistent next counts!");
         }
         checkCountsConsistent(prevCounts, nextCounts);

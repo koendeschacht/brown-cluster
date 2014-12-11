@@ -1,15 +1,15 @@
 package be.bagofwords.brown;
 
-import be.bagofwords.application.status.perf.ThreadSampleMonitor;
 import be.bagofwords.ui.UI;
 import be.bagofwords.util.NumUtils;
 import be.bagofwords.util.Pair;
 import be.bagofwords.util.Utils;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import org.apache.commons.lang3.mutable.MutableDouble;
 import org.apache.commons.lang3.mutable.MutableInt;
 
-import java.io.IOException;
+import java.io.*;
 import java.util.*;
 
 /**
@@ -17,56 +17,54 @@ import java.util.*;
  * <p/>
  * Clustering algorithm of words and phrases described in:
  * Class Based n-gram Models of Natural Language, P.F. Brown, P.V. deSouza, R.L. Mercer, V.J.D. Pietra, J.C. Lai
+ * See:
  * http://people.csail.mit.edu/imcgraw/links/research/pubs/ClassBasedNGrams.pdf
  */
 
-public class BrownClustering extends BaseWordClustering {
-
-    public static void main(String[] args) throws IOException {
-        String inputFile = "/home/koen/input_news_small.txt";
-        String outputFile = "/home/koen/brown_output6.txt";
-        int minFrequencyOfPhrase = 10;
-        int maxNumberOfClusters = 1000;
-        boolean onlySwapMostFrequentWords = true;
-        long start = System.currentTimeMillis();
-        new BrownClustering(inputFile, outputFile, minFrequencyOfPhrase, maxNumberOfClusters, onlySwapMostFrequentWords).run();
-        long end = System.currentTimeMillis();
-        UI.write("Took " + (end - start) + " ms.");
-    }
+public class BrownClustering {
 
     public static final boolean DO_TESTS = false; //you probably want to enable this during development
 
+    private static final String UNKNOWN_PHRASE = "_UNKNOWN_";
+
+    private final String inputFile;
+    private final String outputFile;
+    private final int minFrequencyOfPhrase;
     private final int maxNumberOfClusters;
     private boolean onlySwapMostFrequentWords;
 
     public BrownClustering(String inputFile, String outputFile, int minFrequencyOfPhrase, int maxNumberOfClusters, boolean onlySwapMostFrequentWords) {
-        super(inputFile, outputFile, minFrequencyOfPhrase);
+        this.inputFile = inputFile;
+        this.outputFile = outputFile;
+        this.minFrequencyOfPhrase = minFrequencyOfPhrase;
         this.maxNumberOfClusters = maxNumberOfClusters;
         this.onlySwapMostFrequentWords = onlySwapMostFrequentWords;
     }
 
-    private void run() throws IOException {
-        ThreadSampleMonitor threadSampleMonitor = new ThreadSampleMonitor(true, "threadSamples.txt", "brown-cluster");
+    /**
+     * Read phrases from inputFile, run cluster algorithm and write cluster of every phrase to outputFile
+     */
+
+    public void run() throws IOException {
         Pair<Map<Integer, String>, Int2IntOpenHashMap> readPhrases = readPhrases();
         Map<Integer, String> phraseMap = readPhrases.getFirst();
         Int2IntOpenHashMap phraseFrequencies = readPhrases.getSecond();
         UI.write("Read " + phraseMap.size() + " phrases.");
         ContextCountsImpl contextCounts = extractContextCounts(phraseMap);
         doClustering(phraseMap, contextCounts, phraseFrequencies);
-        threadSampleMonitor.terminate();
     }
 
     private void doClustering(Map<Integer, String> phraseMap, ContextCountsImpl phraseContextCounts, Int2IntOpenHashMap phraseFrequencies) throws IOException {
-        Int2IntOpenHashMap phraseToClusterMap = initializeClusters(phraseMap.size());
         /**
          * STEP 1: create for every unique phrase a unique cluster
          */
+        Int2IntOpenHashMap phraseToClusterMap = initializeClusters(phraseMap.size());
         ContextCountsImpl clusterContextCounts = phraseContextCounts.clone(); //initially these counts are identical
         if (DO_TESTS) {
-            TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
+            ContextCountsUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
         }
         /**
-         * STEP 2: for all phrases that are not among the maxNumberOfClusters frequent phrases, merge their corresponding cluster with a cluster corresponding to a frequent phrase
+         * STEP 2: merge clusters of infrequent phrases with clusters of frequent phrases, and swap words among clusters
          */
         if (onlySwapMostFrequentWords) {
             int numOfFrequentPhrases = Math.min(phraseMap.size(), maxNumberOfClusters * 10);
@@ -78,20 +76,38 @@ public class BrownClustering extends BaseWordClustering {
             swapPhrases(0, phraseMap.size(), phraseToClusterMap, clusterContextCounts, phraseContextCounts);
         }
         if (DO_TESTS) {
-            TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
+            ContextCountsUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
         }
         /**
-         * STEP 4: merge remaining clusters hierarchically
+         * STEP 3: merge clusters hierarchically
          */
         Map<Integer, ClusterHistoryNode> historyNodes = initializeHistoryNodes(phraseToClusterMap);
-        iterativelyMergeClusters(historyNodes, clusterContextCounts);
+        mergeAllClusters(historyNodes, clusterContextCounts);
         writeOutput(phraseMap, phraseToClusterMap, historyNodes, phraseFrequencies);
     }
+
+    /**
+     * see paragraph "We know of ..." on page 472 of [Brown et al.].
+     */
+
+    private void mergeInfrequentPhrasesWithFrequentPhraseClusters(int startPhrase, int endPhrase, Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts) {
+        for (int infrequentPhrase = startPhrase; infrequentPhrase < endPhrase; infrequentPhrase++) {
+            int cluster = findBestClusterToMerge(infrequentPhrase, 0, maxNumberOfClusters, clusterContextCounts).getFirst();
+            UI.write("Will merge phrase " + infrequentPhrase + " with " + cluster);
+            clusterContextCounts.mergeClusters(infrequentPhrase, cluster);
+            phraseToClusterMap.put(infrequentPhrase, cluster);
+        }
+    }
+
+    /**
+     * see paragraph "We know of ..." on page 472 of [Brown et al.].
+     */
 
     private void swapPhrases(int phraseStart, int phraseEnd, Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts, ContextCountsImpl phraseContextCounts) {
         int numOfPhrases = phraseEnd - phraseStart;
         int numOfPhrasesChangedInLastIteration = numOfPhrases;
         int iteration = 0;
+        //continue swapping phrases until less then 1% of the phrases has changed in the last iteration
         while (numOfPhrasesChangedInLastIteration * 100 > numOfPhrases) {
             numOfPhrasesChangedInLastIteration = 0;
             for (int phrase = phraseStart; phrase < phraseEnd; phrase++) {
@@ -107,7 +123,7 @@ public class BrownClustering extends BaseWordClustering {
                     clusterContextCounts.removeCounts(contextCountsForPhrase.mapCluster(SwapWordContextCounts.DUMMY_CLUSTER, currCluster));
                     clusterContextCounts.addCounts(contextCountsForPhrase.mapCluster(SwapWordContextCounts.DUMMY_CLUSTER, newCluster));
                     if (DO_TESTS) {
-                        TestUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
+                        ContextCountsUtils.checkCounts(clusterContextCounts, phraseToClusterMap, phraseContextCounts);
                         checkSwapScores(phraseToClusterMap, clusterContextCounts, phraseContextCounts, phrase, currCluster, bestClusterScore, oldScore, newCluster);
                     }
                     numOfPhrasesChangedInLastIteration++;
@@ -117,49 +133,11 @@ public class BrownClustering extends BaseWordClustering {
         }
     }
 
-    private void checkSwapScores(Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts, ContextCountsImpl phraseContextCounts, int phrase, int currCluster, Pair<Integer, Double> bestClusterScore, double oldScore, int newCluster) {
-        ContextCountsImpl debugContextCountsForPhrase = mapPhraseCountsToClusterCounts(phrase, phraseToClusterMap, phraseContextCounts, SwapWordContextCounts.DUMMY_CLUSTER);
-        SwapWordContextCounts debugSwapWordContextCounts = new SwapWordContextCounts(clusterContextCounts, debugContextCountsForPhrase, newCluster);
-        double debugOldScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, currCluster, debugSwapWordContextCounts);
-        double debugNewScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, newCluster, debugSwapWordContextCounts);
-        if (!NumUtils.equal(debugOldScore, oldScore)) {
-            throw new RuntimeException("Inconsistent score! " + oldScore + " " + debugOldScore);
-        }
-        if (!NumUtils.equal(debugNewScore, bestClusterScore.getSecond())) {
-            throw new RuntimeException("Inconsistent score! " + bestClusterScore.getSecond() + " " + debugNewScore);
-        }
-    }
+    /**
+     * see paragraph "Although we have... " on page 473 of [Brown et al.]
+     */
 
-    private ContextCountsImpl mapPhraseCountsToClusterCounts(int phrase, Int2IntOpenHashMap phraseToClusterMap, ContextCounts phraseContextCounts, int newCluster) {
-        Map<Integer, Int2IntOpenHashMap> prevClusterCounts = new HashMap<>();
-        Map<Integer, Int2IntOpenHashMap> nextClusterCounts = new HashMap<>();
-        addCounts(phraseToClusterMap, phraseContextCounts.getPrevCounts(phrase), prevClusterCounts, nextClusterCounts, phrase, true, newCluster);
-        addCounts(phraseToClusterMap, phraseContextCounts.getNextCounts(phrase), nextClusterCounts, prevClusterCounts, phrase, false, newCluster);
-        return new ContextCountsImpl(prevClusterCounts, nextClusterCounts);
-    }
-
-    private void addCounts(Int2IntOpenHashMap phraseToClusterMap, Int2IntOpenHashMap phraseContextCounts, Map<Integer, Int2IntOpenHashMap> prevClusterCounts, Map<Integer, Int2IntOpenHashMap> nextClusterCounts, int phrase, boolean includeIdentityCounts, int newCluster) {
-        Int2IntOpenHashMap phrasePrevClusterCounts = prevClusterCounts.get(newCluster);
-        if (phrasePrevClusterCounts == null) {
-            phrasePrevClusterCounts = MapUtils.createNewInt2IntMap();
-            prevClusterCounts.put(newCluster, phrasePrevClusterCounts);
-        }
-        for (Int2IntOpenHashMap.Entry otherPhraseEntry : phraseContextCounts.int2IntEntrySet()) {
-            int otherPhrase = otherPhraseEntry.getIntKey();
-            if (phrase != otherPhrase || includeIdentityCounts) {
-                int clusterOtherPhrase = otherPhrase == phrase ? newCluster : phraseToClusterMap.get(otherPhrase);
-                phrasePrevClusterCounts.addTo(clusterOtherPhrase, otherPhraseEntry.getIntValue());
-                Int2IntOpenHashMap otherPhraseNextCounts = nextClusterCounts.get(clusterOtherPhrase);
-                if (otherPhraseNextCounts == null) {
-                    otherPhraseNextCounts = MapUtils.createNewInt2IntMap();
-                    nextClusterCounts.put(clusterOtherPhrase, otherPhraseNextCounts);
-                }
-                otherPhraseNextCounts.addTo(newCluster, otherPhraseEntry.getValue());
-            }
-        }
-    }
-
-    private void iterativelyMergeClusters(Map<Integer, ClusterHistoryNode> nodes, ContextCountsImpl contextCounts) {
+    private void mergeAllClusters(Map<Integer, ClusterHistoryNode> nodes, ContextCountsImpl contextCounts) {
         nodes = new HashMap<>(nodes);
         List<MergeCandidate> mergeCandidates = computeAllScores(contextCounts);
         while (!mergeCandidates.isEmpty()) {
@@ -174,9 +152,63 @@ public class BrownClustering extends BaseWordClustering {
         }
     }
 
+    /**
+     * Utility method to check that the score we computed to swap a phrase from currCluster to newCluster was correct.
+     */
+
+    private void checkSwapScores(Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts, ContextCountsImpl phraseContextCounts, int phrase, int currCluster, Pair<Integer, Double> bestClusterScore, double oldScore, int newCluster) {
+        ContextCountsImpl debugContextCountsForPhrase = mapPhraseCountsToClusterCounts(phrase, phraseToClusterMap, phraseContextCounts, SwapWordContextCounts.DUMMY_CLUSTER);
+        SwapWordContextCounts debugSwapWordContextCounts = new SwapWordContextCounts(clusterContextCounts, debugContextCountsForPhrase, newCluster);
+        double debugOldScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, currCluster, debugSwapWordContextCounts);
+        double debugNewScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, newCluster, debugSwapWordContextCounts);
+        if (!NumUtils.equal(debugOldScore, oldScore)) {
+            throw new RuntimeException("Inconsistent score! " + oldScore + " " + debugOldScore);
+        }
+        if (!NumUtils.equal(debugNewScore, bestClusterScore.getSecond())) {
+            throw new RuntimeException("Inconsistent score! " + bestClusterScore.getSecond() + " " + debugNewScore);
+        }
+    }
+
+    /**
+     * For a given phrase, collect all cluster counts that correspond to occurrences of this phrase in the corpus
+     */
+
+    private ContextCountsImpl mapPhraseCountsToClusterCounts(int phrase, Int2IntOpenHashMap phraseToClusterMap, ContextCounts phraseContextCounts, int newCluster) {
+        Map<Integer, Int2IntOpenHashMap> prevClusterCounts = new HashMap<>();
+        Map<Integer, Int2IntOpenHashMap> nextClusterCounts = new HashMap<>();
+        addCounts(phraseToClusterMap, phraseContextCounts.getPrevCounts(phrase), prevClusterCounts, nextClusterCounts, phrase, true, newCluster);
+        addCounts(phraseToClusterMap, phraseContextCounts.getNextCounts(phrase), nextClusterCounts, prevClusterCounts, phrase, false, newCluster);
+        return new ContextCountsImpl(prevClusterCounts, nextClusterCounts);
+    }
+
+    private void addCounts(Int2IntOpenHashMap phraseToClusterMap, Int2IntOpenHashMap phraseContextCounts, Map<Integer, Int2IntOpenHashMap> prevClusterCounts, Map<Integer, Int2IntOpenHashMap> nextClusterCounts, int phrase, boolean includeIdentityCounts, int newCluster) {
+        Int2IntOpenHashMap phrasePrevClusterCounts = prevClusterCounts.get(newCluster);
+        if (phrasePrevClusterCounts == null) {
+            phrasePrevClusterCounts = ContextCountsUtils.createNewInt2IntMap();
+            prevClusterCounts.put(newCluster, phrasePrevClusterCounts);
+        }
+        for (Int2IntOpenHashMap.Entry otherPhraseEntry : phraseContextCounts.int2IntEntrySet()) {
+            int otherPhrase = otherPhraseEntry.getIntKey();
+            if (phrase != otherPhrase || includeIdentityCounts) {
+                int clusterOtherPhrase = otherPhrase == phrase ? newCluster : phraseToClusterMap.get(otherPhrase);
+                phrasePrevClusterCounts.addTo(clusterOtherPhrase, otherPhraseEntry.getIntValue());
+                Int2IntOpenHashMap otherPhraseNextCounts = nextClusterCounts.get(clusterOtherPhrase);
+                if (otherPhraseNextCounts == null) {
+                    otherPhraseNextCounts = ContextCountsUtils.createNewInt2IntMap();
+                    nextClusterCounts.put(clusterOtherPhrase, otherPhraseNextCounts);
+                }
+                otherPhraseNextCounts.addTo(newCluster, otherPhraseEntry.getValue());
+            }
+        }
+    }
+
     private void removeMergeCandidates(List<MergeCandidate> mergeCandidates, int smallCluster) {
         mergeCandidates.removeIf(next -> next.getCluster1() == smallCluster || next.getCluster2() == smallCluster);
     }
+
+    /**
+     * Compute the scores of all merge candidates
+     */
 
     private List<MergeCandidate> computeAllScores(ContextCounts contextCounts) {
         List<MergeCandidate> mergeCandidates = Collections.synchronizedList(new ArrayList<>());
@@ -203,15 +235,6 @@ public class BrownClustering extends BaseWordClustering {
             }
         });
         Collections.sort(mergeCandidates);
-    }
-
-    private void mergeInfrequentPhrasesWithFrequentPhraseClusters(int startPhrase, int endPhrase, Int2IntOpenHashMap phraseToClusterMap, ContextCountsImpl clusterContextCounts) {
-        for (int phrase = startPhrase; phrase < endPhrase; phrase++) {
-            int newCluster = findBestClusterToMerge(phrase, 0, maxNumberOfClusters, clusterContextCounts).getFirst();
-            UI.write("Will merge cluster " + phrase + " with " + newCluster);
-            clusterContextCounts.mergeClusters(phrase, newCluster);
-            phraseToClusterMap.put(phrase, newCluster);
-        }
     }
 
     private Pair<Integer, Double> findBestClusterToMerge(int origCluster, int minCluster, int maxCluster, ContextCounts clusterContextCounts) {
@@ -284,6 +307,164 @@ public class BrownClustering extends BaseWordClustering {
         }
     }
 
+    private void writeOutput(Map<Integer, String> phraseMap, Int2IntOpenHashMap phraseToClusterMap, Map<Integer, ClusterHistoryNode> nodes, Int2IntOpenHashMap phraseFrequencies) throws IOException {
+        List<String> outputLines = new ArrayList<>();
+        for (Integer phraseInd : phraseToClusterMap.keySet()) {
+            String phrase = phraseMap.get(phraseInd);
+            String output = "";
+            ClusterHistoryNode node = nodes.get(phraseToClusterMap.get(phraseInd));
+            while (node != null) {
+                ClusterHistoryNode parent = node.getParent();
+                if (parent != null) {
+                    if (parent.getLeftChild() == node) {
+                        output = '0' + output;
+                    } else {
+                        output = '1' + output;
+                    }
+                }
+                node = parent;
+            }
+            outputLines.add(output + '\t' + phrase + "\t" + phraseFrequencies.get(phraseInd));
+        }
+        Collections.sort(outputLines);
+        BufferedWriter writer = new BufferedWriter(new FileWriter(outputFile));
+        for (String line : outputLines) {
+            writer.write(line);
+            writer.write('\n');
+        }
+        writer.close();
+    }
+
+    private Map<Integer, ClusterHistoryNode> initializeHistoryNodes(Int2IntOpenHashMap phraseToClusterMap) {
+        Map<Integer, ClusterHistoryNode> result = new HashMap<>();
+        for (Integer cluster : phraseToClusterMap.values()) {
+            result.put(cluster, new ClusterHistoryNode(cluster));
+        }
+        return result;
+    }
+
+    private void updateClusterNodes(Map<Integer, ClusterHistoryNode> nodes, int smallCluster, int largeCluster) {
+        ClusterHistoryNode parent = new ClusterHistoryNode(largeCluster);
+        parent.setChildren(nodes.remove(smallCluster), nodes.get(largeCluster));
+        nodes.put(largeCluster, parent);
+    }
+
+    private ContextCountsImpl extractContextCounts(Map<Integer, String> phraseMap) throws IOException {
+        Map<String, Integer> invertedPhraseMap = invert(phraseMap); //mapping of words to their index
+        Map<Integer, Int2IntOpenHashMap> prevContextCounts = createEmptyCounts(phraseMap.size());
+        Map<Integer, Int2IntOpenHashMap> nextContextCounts = createEmptyCounts(phraseMap.size());
+        BufferedReader rdr = new BufferedReader(new FileReader(inputFile));
+        while (rdr.ready()) {
+            String line = rdr.readLine();
+            List<String> phrases = splitLineInPhrases(line);
+            Integer prevPhrase = null;
+            for (String phrase : phrases) {
+                Integer currPhrase = invertedPhraseMap.get(phrase);
+                if (currPhrase == null) {
+                    //infrequent phrase
+                    currPhrase = invertedPhraseMap.get(UNKNOWN_PHRASE);
+                }
+                if (prevPhrase != null) {
+                    nextContextCounts.get(prevPhrase).addTo(currPhrase, 1);
+                    prevContextCounts.get(currPhrase).addTo(prevPhrase, 1);
+                }
+                prevPhrase = currPhrase;
+            }
+        }
+        rdr.close();
+        trimCounts(prevContextCounts);
+        trimCounts(nextContextCounts);
+        return new ContextCountsImpl(prevContextCounts, nextContextCounts);
+    }
+
+    private Map<String, Integer> invert(Map<Integer, String> map) {
+        Map<String, Integer> invertedMap = new HashMap<>(map.size());
+        for (Map.Entry<Integer, String> entry : map.entrySet()) {
+            invertedMap.put(entry.getValue(), entry.getKey());
+        }
+        return invertedMap;
+    }
+
+    private void trimCounts(Map<Integer, Int2IntOpenHashMap> wordCounts) {
+        wordCounts.values().stream().forEach(Int2IntOpenHashMap::trim);
+    }
+
+    private Map<Integer, Int2IntOpenHashMap> createEmptyCounts(int size) {
+        Map<Integer, Int2IntOpenHashMap> result = new HashMap<>();
+        for (int i = 0; i < size; i++) {
+            result.put(i, ContextCountsUtils.createNewInt2IntMap());
+        }
+        return result;
+    }
+
+    private Pair<Map<Integer, String>, Int2IntOpenHashMap> readPhrases() throws IOException {
+        Map<String, Integer> rawPraseCounts = countPhrases();
+        Map<Integer, String> phraseToIndexMap = assignWordsToIndexBasedOnFrequency(rawPraseCounts);
+        Int2IntOpenHashMap phraseFrequencies = new Int2IntOpenHashMap(phraseToIndexMap.size());
+        for (Map.Entry<Integer, String> entry : phraseToIndexMap.entrySet()) {
+            phraseFrequencies.put(entry.getKey(), rawPraseCounts.get(entry.getValue()));
+        }
+        return new Pair<>(phraseToIndexMap, phraseFrequencies);
+    }
+
+    private Map<Integer, String> assignWordsToIndexBasedOnFrequency(Map<String, Integer> phraseCounts) {
+        List<String> allWords = new ArrayList<>(phraseCounts.keySet());
+        Collections.sort(allWords, (word1, word2) -> -Integer.compare(phraseCounts.get(word1), phraseCounts.get(word2)));
+        Map<Integer, String> wordMapping = new HashMap<>();
+        int ind = 0;
+        for (String word : allWords) {
+            wordMapping.put(ind++, word);
+        }
+        return wordMapping;
+    }
+
+    private Map<String, Integer> countPhrases() throws IOException {
+        //Count how often every phrase occurs in the input
+        Map<String, Integer> phraseCounts = countAllPhrases(inputFile);
+        //Select phrases that occur >= minFrequencyOfPhrase
+        int totalDroppedCounts = 0;
+        Iterator<Map.Entry<String, Integer>> iterator = phraseCounts.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Integer> entry = iterator.next();
+            if (entry.getValue() < minFrequencyOfPhrase) {
+                totalDroppedCounts += entry.getValue();
+                iterator.remove();
+            }
+        }
+        if (totalDroppedCounts > 0) {
+            phraseCounts.put(UNKNOWN_PHRASE, totalDroppedCounts);
+        }
+        return phraseCounts;
+    }
+
+    private Map<String, Integer> countAllPhrases(String textInputFile) throws IOException {
+        Object2IntOpenHashMap<String> phraseCounts = new Object2IntOpenHashMap<>();
+        BufferedReader rdr = new BufferedReader(new FileReader(textInputFile));
+        while (rdr.ready()) {
+            String line = rdr.readLine();
+            List<String> phrases = splitLineInPhrases(line);
+            for (String phrase : phrases) {
+                phraseCounts.addTo(phrase, 1);
+            }
+        }
+        rdr.close();
+        return phraseCounts;
+    }
+
+    /**
+     * Could be adapted to have phrases of more than 1 word (e.g. map collocations such as 'fast food' or 'prime minister' to a single phrase)
+     */
+
+    private List<String> splitLineInPhrases(String line) {
+        String[] words = line.split("\\s");
+        List<String> result = new ArrayList<>();
+        for (String word : words) {
+            if (!word.isEmpty()) {
+                result.add(word);
+            }
+        }
+        return result;
+    }
 
     private void checkProbability(double probability) {
         if (probability < 0 || probability > 1 || Double.isNaN(probability)) {
@@ -292,7 +473,7 @@ public class BrownClustering extends BaseWordClustering {
     }
 
     private Int2IntOpenHashMap initializeClusters(int numberOfPhrases) {
-        Int2IntOpenHashMap phraseToCluster = MapUtils.createNewInt2IntMap(numberOfPhrases);
+        Int2IntOpenHashMap phraseToCluster = ContextCountsUtils.createNewInt2IntMap(numberOfPhrases);
         for (int i = 0; i < numberOfPhrases; i++) {
             phraseToCluster.put(i, i); //assign every word to its own cluster
         }
@@ -300,4 +481,3 @@ public class BrownClustering extends BaseWordClustering {
     }
 
 }
-

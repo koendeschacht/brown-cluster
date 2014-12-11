@@ -6,6 +6,8 @@ import java.util.Set;
 
 /**
  * Created by Koen Deschacht (koendeschacht@gmail.com) on 03/12/14.
+ * <p/>
+ * This class represents context counts where smallCluster was merged into largeCluster
  */
 public class MergedContextCounts implements ContextCounts {
 
@@ -22,22 +24,22 @@ public class MergedContextCounts implements ContextCounts {
     @Override
     public int getPrevTotal(int cluster) {
         if (cluster == smallCluster) {
-            return 0;
+            return 0; //smallCluster does not exist anymore
         } else if (cluster == largeCluster) {
-            return contextCounts.getPrevTotal(smallCluster) + contextCounts.getPrevTotal(largeCluster);
+            return contextCounts.getPrevTotal(smallCluster) + contextCounts.getPrevTotal(largeCluster); //largeCluster has all counts of smallCluster and of largeCluster
         } else {
-            return contextCounts.getPrevTotal(cluster);
+            return contextCounts.getPrevTotal(cluster); //the total of this cluster is not affected
         }
     }
 
     @Override
     public int getNextTotal(int cluster) {
         if (cluster == smallCluster) {
-            return 0;
+            return 0; //smallCluster does not exist anymore
         } else if (cluster == largeCluster) {
-            return contextCounts.getNextTotal(smallCluster) + contextCounts.getNextTotal(largeCluster);
+            return contextCounts.getNextTotal(smallCluster) + contextCounts.getNextTotal(largeCluster);  //largeCluster has all counts of smallCluster and of largeCluster
         } else {
-            return contextCounts.getNextTotal(cluster);
+            return contextCounts.getNextTotal(cluster); //the total of this cluster is not affected
         }
     }
 
@@ -48,20 +50,22 @@ public class MergedContextCounts implements ContextCounts {
 
     @Override
     public Set<Integer> getAllClusters() {
-        return contextCounts.getAllClusters();
+        Set<Integer> result = contextCounts.getAllClusters();
+        result.remove(smallCluster);
+        return result;
     }
 
     @Override
     public Int2IntOpenHashMap getPrevCounts(int cluster) {
         Int2IntOpenHashMap result;
         if (cluster == smallCluster) {
-            return MapUtils.createNewInt2IntMap();
+            return ContextCountsUtils.createNewInt2IntMap(); //smallCluster has no context counts
         } else if (cluster == largeCluster) {
-            result = merge(contextCounts.getPrevCounts(smallCluster), contextCounts.getPrevCounts(largeCluster));
+            result = merge(contextCounts.getPrevCounts(smallCluster), contextCounts.getPrevCounts(largeCluster)); //largeCluster has original context counts merged with context counts of small cluster
         } else {
             result = contextCounts.getPrevCounts(cluster);
         }
-        result = replace(result, smallCluster, largeCluster);
+        result = replace(result, smallCluster, largeCluster);  //map all counts that refer to smallCluster to largeCluster
         return result;
     }
 
@@ -69,13 +73,13 @@ public class MergedContextCounts implements ContextCounts {
     public Int2IntOpenHashMap getNextCounts(int cluster) {
         Int2IntOpenHashMap result;
         if (cluster == smallCluster) {
-            return MapUtils.createNewInt2IntMap();
+            return ContextCountsUtils.createNewInt2IntMap(); //smallCluster has no context counts
         } else if (cluster == largeCluster) {
-            result = merge(contextCounts.getNextCounts(smallCluster), contextCounts.getNextCounts(largeCluster));
+            result = merge(contextCounts.getNextCounts(smallCluster), contextCounts.getNextCounts(largeCluster)); //largeCluster has original context counts merged with context counts of small cluster
         } else {
             result = contextCounts.getNextCounts(cluster);
         }
-        result = replace(result, smallCluster, largeCluster);
+        result = replace(result, smallCluster, largeCluster);  //map all counts that refer to smallCluster to largeCluster
         return result;
     }
 
