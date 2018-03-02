@@ -161,10 +161,10 @@ public class BrownClustering {
         SwapWordContextCounts debugSwapWordContextCounts = new SwapWordContextCounts(clusterContextCounts, debugContextCountsForPhrase, newCluster);
         double debugOldScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, currCluster, debugSwapWordContextCounts);
         double debugNewScore = computeMergeScore(SwapWordContextCounts.DUMMY_CLUSTER, 0.0, newCluster, debugSwapWordContextCounts);
-        if (!NumUtils.equal(debugOldScore, oldScore)) {
+        if (oldScore != debugOldScore) {
             throw new RuntimeException("Inconsistent score! " + oldScore + " " + debugOldScore);
         }
-        if (!NumUtils.equal(debugNewScore, bestClusterScore.getSecond())) {
+        if (debugNewScore != bestClusterScore.getSecond()) {
             throw new RuntimeException("Inconsistent score! " + bestClusterScore.getSecond() + " " + debugNewScore);
         }
     }
@@ -228,7 +228,7 @@ public class BrownClustering {
 
     private void updateMergeCandidateScores(int cluster2, List<MergeCandidate> mergeCandidates, ContextCounts contextCounts) {
         double skj = computeSK(cluster2, contextCounts);
-        Utils.fasterParallelStream(mergeCandidates).forEach(mergeCandidate -> {
+        mergeCandidates.parallelStream().forEach(mergeCandidate -> {
             if (mergeCandidate.getCluster2() == cluster2) {
                 double ski = computeSK(mergeCandidate.getCluster1(), contextCounts);
                 mergeCandidate.setScore(computeMergeScore(mergeCandidate.getCluster1(), ski, mergeCandidate.getCluster2(), skj, contextCounts));
@@ -240,7 +240,7 @@ public class BrownClustering {
     private Pair<Integer, Double> findBestClusterToMerge(int origCluster, int minCluster, int maxCluster, ContextCounts clusterContextCounts) {
         MutableDouble bestScore = new MutableDouble(-Double.MAX_VALUE);
         MutableInt bestCluster = new MutableInt(-1);
-        Utils.fasterParallelStream(clusterContextCounts.getAllClusters()).forEach(cluster -> {
+        clusterContextCounts.getAllClusters().parallelStream().forEach(cluster -> {
             if (cluster >= minCluster && cluster < maxCluster && cluster != origCluster) {
                 double score = computeMergeScore(origCluster, 0.0, cluster, clusterContextCounts);
                 if (score > bestScore.doubleValue()) {
@@ -456,10 +456,10 @@ public class BrownClustering {
      */
 
     private List<String> splitLineInPhrases(String line) {
-        String[] words = line.split("\\s");
+        String[] words = line.toLowerCase().split("\\s");
         List<String> result = new ArrayList<>();
         for (String word : words) {
-            if (!word.isEmpty()) {
+            if (word.matches("\\w+")) {
                 result.add(word);
             }
         }
